@@ -1,7 +1,7 @@
 import io
 import re
-from datetime import datetime
 from pathlib import Path
+from datetime import datetime
 
 import fitz
 import pandas as pd
@@ -9,412 +9,871 @@ import pytesseract
 import streamlit as st
 from PIL import Image, ImageEnhance, ImageOps
 
-st.set_page_config(page_title="BillWise India", page_icon="⚡", layout="wide")
+st.set_page_config(
+    page_title="BillWise India",
+    page_icon="⚡",
+    layout="wide"
+)
 
 st.markdown("""
 <style>
-.block-container{max-width:1250px;padding-top:1.4rem}
-.hero{padding:1.25rem 1.4rem;border:1px solid rgba(128,128,128,.3);border-radius:18px;margin-bottom:1rem}
-.muted{opacity:.8;font-size:.9rem}
+.block-container {max-width:1250px; padding-top:1.4rem}
+.hero {padding:1.25rem; border:1px solid rgba(128,128,128,.3);
+border-radius:18px; margin-bottom:1rem}
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown("""
 <div class="hero">
 <h1>⚡ BillWise India</h1>
-<p><b>Multilingual electricity-bill reader, usage analyzer, appliance estimator and savings coach.</b></p>
-<p class="muted">Upload a bill, verify the extracted fields, compare usage, estimate appliance energy, and get practical savings guidance.</p>
+<p><b>Multilingual Electricity Bill Reader and Savings Assistant</b></p>
+<p>Read bills, compare monthly consumption, estimate appliance energy,
+and discover ways to save electricity.</p>
 </div>
 """, unsafe_allow_html=True)
 
-st.warning("Reliability notice: extraction results are candidates, not official readings. Verify the month, amount and kWh against the original bill before saving. A bill alone cannot identify the exact appliance consuming electricity.")
+st.warning(
+    "Extracted values are candidates. Verify the billing month, amount "
+    "and kWh against the original bill before saving."
+)
 
 LANGS = {
-    "English": "eng", "Marathi": "mar", "Hindi": "hin", "Gujarati": "guj",
-    "Bengali": "ben", "Tamil": "tam", "Telugu": "tel", "Kannada": "kan",
-    "Malayalam": "mal", "Punjabi": "pan", "Urdu": "urd", "Odia": "ori",
+    "English": "eng", "Marathi": "mar", "Hindi": "hin",
+    "Gujarati": "guj", "Bengali": "ben", "Tamil": "tam",
+    "Telugu": "tel", "Kannada": "kan", "Malayalam": "mal",
+    "Punjabi": "pan", "Urdu": "urd", "Odia": "ori",
     "Assamese": "asm", "Nepali": "nep", "Sanskrit": "san"
 }
+
 PROVIDERS = [
-    "Auto-detect / Other", "MSEDCL / Mahavitaran", "Adani Electricity", "Tata Power",
-    "BEST Mumbai", "BESCOM", "TANGEDCO", "BSES", "Torrent Power", "Other provider"
+    "Auto-detect / Other", "MSEDCL / Mahavitaran",
+    "Adani Electricity", "Tata Power", "BEST Mumbai",
+    "BESCOM", "TANGEDCO", "BSES", "Torrent Power",
+    "Other provider"
 ]
+
 AMOUNT_PATTERNS = [
-    r"total\s*amount\s*due", r"net\s*amount\s*payable", r"amount\s*payable",
-    r"amount\s*due", r"bill\s*amount", r"total\s*bill", r"net\s*bill\s*amount",
-    r"current\s*bill\s*amount", r"payable\s*amount", r"grand\s*total",
-    r"total\s*payable", r"bill\s*total", r"amount\s*to\s*be\s*paid"
+    r"total\s*amount\s*due",
+    r"net\s*amount\s*payable",
+    r"amount\s*payable",
+    r"amount\s*due",
+    r"bill\s*amount",
+    r"total\s*bill",
+    r"net\s*bill\s*amount",
+    r"current\s*bill\s*amount",
+    r"payable\s*amount",
+    r"grand\s*total",
+    r"total\s*payable",
+    r"bill\s*total",
+    r"amount\s*to\s*be\s*paid"
 ]
+
 UNIT_PATTERNS = [
-    r"units?\s*consumed", r"consumption\s*(?:units|kwh)", r"energy\s*consumed",
-    r"consumed\s*units", r"total\s*consumption", r"units?\s*\(\s*kwh\s*\)",
-    r"kwh\s*consumed", r"consumption\s*in\s*kwh", r"active\s*energy\s*\(\s*kwh\s*\)",
-    r"energy\s*\(\s*kwh\s*\)", r"billable\s*units"
+    r"units?\s*consumed",
+    r"consumption\s*(?:units|kwh)",
+    r"energy\s*consumed",
+    r"consumed\s*units",
+    r"total\s*consumption",
+    r"units?\s*\(\s*kwh\s*\)",
+    r"kwh\s*consumed",
+    r"consumption\s*in\s*kwh",
+    r"active\s*energy\s*\(\s*kwh\s*\)",
+    r"energy\s*\(\s*kwh\s*\)",
+    r"billable\s*units"
 ]
-NUM = re.compile(r"(?<![A-Za-z])(?:₹|Rs\.?|INR)?\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)(?![A-Za-z])", re.I)
+
+NUM = re.compile(
+    r"(?<![A-Za-z])(?:₹|Rs\.?|INR)?\s*"
+    r"([0-9][0-9,]*(?:\.[0-9]{1,2})?)"
+    r"(?![A-Za-z])",
+    re.I
+)
 
 with st.sidebar:
-    st.header("Bill reading settings")
+    st.header("Bill Reading Settings")
+
     provider = st.selectbox("Electricity provider", PROVIDERS)
-    selected_languages = st.multiselect("OCR languages", list(LANGS), default=["English", "Marathi", "Hindi"])
-    force_ocr = st.checkbox("Force OCR even when PDF text exists", value=False)
-    dpi = st.slider("OCR quality", min_value=2, max_value=4, value=3)
-    st.caption("Choose the language(s) visible on the bill. OCR language packs are installed by packages.txt; some hosting builds may not provide every pack.")
+
+    selected_languages = st.multiselect(
+        "Languages printed on the bill",
+        list(LANGS.keys()),
+        default=["English", "Marathi", "Hindi"]
+    )
+
+    force_ocr = st.checkbox(
+        "Force OCR even when PDF text exists",
+        value=False
+    )
+
+    dpi = st.slider("OCR quality", 2, 4, 3)
+
+    st.caption(
+        "OCR language packs must be installed on the server. "
+        "Choose the languages present on your bill."
+    )
 
 if "bill_records" not in st.session_state:
     st.session_state.bill_records = []
+
 if "support_chat" not in st.session_state:
     st.session_state.support_chat = []
 
+
 def clean_lines(text):
-    return [re.sub(r"\s+", " ", x).strip() for x in text.splitlines() if x.strip()]
+    return [
+        re.sub(r"\s+", " ", line).strip()
+        for line in (text or "").splitlines()
+        if line.strip()
+    ]
+
 
 def text_quality(text):
     if not text or len(text.strip()) < 45:
         return False
-    t = text.strip()
-    printable = sum(ch.isalnum() or ch in "₹.,:/-%() \n\t" for ch in t)
-    replacement = t.count("\ufffd") + t.count("\u25a1")
-    return printable / max(len(t), 1) > 0.65 and replacement < 4
 
-def preprocess_image(img):
-    img = ImageOps.grayscale(img)
-    img = ImageOps.autocontrast(img)
-    return ImageEnhance.Contrast(img).enhance(1.45)
+    bad_markers = ("�", "□", "Ã", "Â", "â€", "ï»¿")
+    bad_count = sum(text.count(x) for x in bad_markers)
 
-def ocr_image(img, lang_codes):
+    readable = sum(
+        ch.isalnum() or ch in "₹.,:/-%() \n\t"
+        for ch in text
+    )
+
+    ratio = readable / max(len(text), 1)
+
+    return "�" not in text and bad_count < 3 and ratio > 0.65
+
+
+def preprocess_image(image):
+    image = ImageOps.grayscale(image)
+    image = ImageOps.autocontrast(image)
+    return ImageEnhance.Contrast(image).enhance(1.45)
+
+
+def ocr_image(image, language_codes):
     attempts = []
-    if lang_codes:
-        attempts.append(lang_codes)
+
+    if language_codes:
+        attempts.append(language_codes)
+        attempts.extend(language_codes.split("+"))
+
     if "eng" not in attempts:
         attempts.append("eng")
-    for lang in attempts:
+
+    attempts = list(dict.fromkeys(attempts))
+
+    try:
+        available = set(pytesseract.get_languages(config=""))
+    except Exception:
+        available = set()
+
+    best_text = ""
+    best_method = "OCR unavailable: check Tesseract and language packs"
+    best_score = -1
+
+    for language in attempts:
+        required = language.split("+")
+
+        if available and any(code not in available for code in required):
+            continue
+
         try:
-            txt = pytesseract.image_to_string(img, lang=lang, config="--psm 6")
-            if txt.strip():
-                return txt, f"Tesseract OCR ({lang})"
+            result = pytesseract.image_to_string(
+                image,
+                lang=language,
+                config="--oem 1 --psm 6"
+            ).strip()
+
+            if not result:
+                continue
+
+            readable = sum(
+                ch.isalnum() or ch in "₹.,:/-%() \n\t"
+                for ch in result
+            )
+
+            score = readable / max(len(result), 1) * 100
+
+            if any(code in required for code in ("mar", "hin", "san", "nep")):
+                devanagari_count = sum(
+                    "\u0900" <= ch <= "\u097f"
+                    for ch in result
+                )
+                score += min(devanagari_count, 100) * 0.15
+
+            if score > best_score:
+                best_text = result
+                best_method = f"Tesseract OCR ({language})"
+                best_score = score
+
         except Exception:
             continue
-    return "", "OCR unavailable (selected language packs may be missing)"
 
-def read_upload(upload, lang_codes, force_ocr, dpi):
+    return best_text, best_method
+
+
+def read_upload(upload, language_codes, force_ocr, dpi):
     suffix = Path(upload.name).suffix.lower()
+
     if suffix == ".pdf":
-        all_text, methods = [], []
-        with fitz.open(stream=upload.getvalue(), filetype="pdf") as doc:
-            for page in doc:
+        all_text = []
+        methods = []
+
+        with fitz.open(
+            stream=upload.getvalue(),
+            filetype="pdf"
+        ) as document:
+
+            for page in document:
                 embedded = (page.get_text("text") or "").strip()
+
                 should_ocr = force_ocr or not text_quality(embedded)
-                # Legacy multilingual bills can have a text layer that exists but is garbled.
-                # OCR is attempted when English labels are mostly absent.
+
                 if not should_ocr:
-                    english_labels = any(k in embedded.lower() for k in
-                        ["amount", "payable", "consumption", "units", "kwh", "bill of supply", "total"])
-                    if not english_labels and len(re.findall(r"\d", embedded)) < 10:
+                    labels = [
+                        "amount", "payable", "consumption",
+                        "units", "kwh", "total", "energy"
+                    ]
+
+                    if (
+                        not any(x in embedded.lower() for x in labels)
+                        and len(re.findall(r"\d", embedded)) < 10
+                    ):
                         should_ocr = True
+
                 if should_ocr:
-                    pix = page.get_pixmap(matrix=fitz.Matrix(dpi, dpi), alpha=False)
-                    img = preprocess_image(Image.open(io.BytesIO(pix.tobytes("png"))))
-                    ocr_text, method = ocr_image(img, lang_codes)
-                    all_text.append(embedded + "\n\n[OCR TEXT]\n" + ocr_text)
-                    methods.extend(["Embedded PDF text" if embedded else "", method])
+                    pixmap = page.get_pixmap(
+                        matrix=fitz.Matrix(dpi, dpi),
+                        alpha=False
+                    )
+
+                    image = Image.open(
+                        io.BytesIO(pixmap.tobytes("png"))
+                    ).convert("RGB")
+
+                    image = preprocess_image(image)
+
+                    ocr_text, method = ocr_image(
+                        image, language_codes
+                    )
+
+                    if ocr_text and (
+                        force_ocr or not text_quality(embedded)
+                    ):
+                        all_text.append(ocr_text)
+                    elif embedded and ocr_text:
+                        all_text.append(embedded + "\n\n" + ocr_text)
+                    elif ocr_text:
+                        all_text.append(ocr_text)
+                    else:
+                        all_text.append(embedded)
+
+                    if embedded:
+                        methods.append("Embedded PDF text")
+
+                    methods.append(method)
+
                 else:
                     all_text.append(embedded)
                     methods.append("Embedded PDF text")
-        return "\n\n".join(x for x in all_text if x.strip()), " + ".join(sorted(set(x for x in methods if x)))
-    img = preprocess_image(Image.open(upload))
-    return ocr_image(img, lang_codes)
 
-def parse_number(s):
+        return (
+            "\n\n".join(x for x in all_text if x.strip()),
+            " + ".join(sorted(set(methods)))
+        )
+
+    image = Image.open(upload).convert("RGB")
+    image = preprocess_image(image)
+    return ocr_image(image, language_codes)
+
+
+def parse_number(value):
     try:
-        return float(s.replace(",", "").replace("₹", "").strip())
-    except Exception:
+        return float(value.replace(",", "").replace("₹", "").strip())
+    except (ValueError, AttributeError):
         return None
+
 
 def label_value(text, patterns, lookahead=2):
     lines = clean_lines(text)
-    for i, line in enumerate(lines):
-        for pat in patterns:
-            m = re.search(pat, line, re.I)
-            if not m:
+
+    for index, line in enumerate(lines):
+        for pattern in patterns:
+            match = re.search(pattern, line, re.I)
+
+            if not match:
                 continue
-            candidates = NUM.findall(line[m.end():])
+
+            candidates = NUM.findall(line[match.end():])
             evidence = line
+
             if not candidates:
-                for nextline in lines[i+1:i+1+lookahead]:
-                    candidates = NUM.findall(nextline)
+                for next_line in lines[index + 1:index + 1 + lookahead]:
+                    candidates = NUM.findall(next_line)
+
                     if candidates:
-                        evidence = f"{line} | {nextline}"
+                        evidence = f"{line} | {next_line}"
                         break
-            values = [parse_number(v) for v in candidates]
-            values = [v for v in values if v is not None]
+
+            values = [
+                parse_number(value)
+                for value in candidates
+            ]
+
+            values = [value for value in values if value is not None]
+
             if values:
                 return values[-1], evidence[:180]
+
     return None, ""
 
-def coordinate_msedcl(pdf_bytes):
-    """Parser for the tested 575x822, two-page MSEDCL PDF template."""
-    try:
-        with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
-            if len(doc) < 2 or abs(doc[0].rect.width - 575) > 8:
-                return None, None, "", "", ""
-            p1, p2 = doc[0], doc[1]
-            w1, w2 = p1.get_text("words"), p2.get_text("words")
-            # The tested template's top-right first date is bill issue month.
-            dates = []
-            for w in w1:
-                x0, y0, x1, y1, word = w[:5]
-                if x0 > 500 and 65 <= y0 <= 82 and re.fullmatch(r"\d{2}-\d{2}-\d{4}", word):
-                    dates.append((abs(y0 - 72), word))
-            month, month_ev = "", ""
-            if dates:
-                date_text = sorted(dates)[0][1]
-                month = datetime.strptime(date_text, "%d-%m-%Y").strftime("%B %Y")
-                month_ev = f"Bill date used for month: {date_text}"
-            # Consumption row in the tested template: three columns e.g. 89, 0, 89.
-            row_numbers = []
-            for w in w1:
-                x0, y0, x1, y1, word = w[:5]
-                if 350 <= x0 <= 390 and 270 <= y0 <= 285 and re.fullmatch(r"\d{1,4}", word):
-                    v = int(word)
-                    if 1 <= v <= 5000:
-                        row_numbers.append((x0, v))
-            units, units_ev = (None, "")
-            if row_numbers:
-                units = sorted(row_numbers, key=lambda z: z[0])[-1][1]
-                units_ev = f"MSEDCL consumption table candidate: {units} kWh"
-            # Summary page: total current bill value in the tested layout.
-            vals = []
-            for w in w2:
-                x0, y0, x1, y1, word = w[:5]
-                if x0 >= 505 and 218 <= y0 <= 229 and re.fullmatch(r"\d[\d,]*\.\d{2}", word):
-                    v = parse_number(word)
-                    if v is not None and 1 <= v <= 100000:
-                        vals.append((x0, v))
-            amount, amount_ev = (None, "")
-            if vals:
-                amount = sorted(vals, key=lambda z: z[0])[-1][1]
-                amount_ev = f"MSEDCL summary-table candidate: ₹{amount:.2f}"
-            if not any(v is not None for v in (amount, units, month)):
-                return None, None, "", "", ""
-            return amount, units, amount_ev, units_ev, month
-    except Exception:
-        return None, None, "", "", ""
 
 def extract_month(text, filename=""):
-    # Prefer a readable month-year in text.
-    month_names = r"(January|February|March|April|May|June|July|August|September|October|November|December)"
-    m = re.search(rf"\b{month_names}\s*,?\s*20\d{{2}}\b", text, re.I)
-    if m:
-        return m.group(0).replace(",", "")
-    # Then prefer dates with a billing period end date, if a label exists.
+    months = (
+        r"(January|February|March|April|May|June|July|August|"
+        r"September|October|November|December)"
+    )
+
+    match = re.search(
+        rf"\b{months}\s*,?\s*20\d{{2}}\b",
+        text or "",
+        re.I
+    )
+
+    if match:
+        return match.group(0).replace(",", "")
+
     lines = clean_lines(text)
-    for i, line in enumerate(lines):
-        if re.search(r"bill\s*period|billing\s*period|period\s*from|reading\s*date", line, re.I):
-            joined = " ".join(lines[i:i+3])
-            dates = re.findall(r"\b\d{2}[-/]\d{2}[-/]\d{4}\b", joined)
-            if dates:
+
+    for index, line in enumerate(lines):
+        if re.search(
+            r"bill\s*period|billing\s*period|period\s*from|reading\s*date",
+            line,
+            re.I
+        ):
+            joined = " ".join(lines[index:index + 3])
+            dates = re.findall(
+                r"\b\d{2}[-/]\d{2}[-/]\d{4}\b",
+                joined
+            )
+
+            for date_text in reversed(dates):
                 try:
-                    dt = datetime.strptime(dates[-1].replace("/", "-"), "%d-%m-%Y")
-                    return dt.strftime("%B %Y")
-                except Exception:
+                    date = datetime.strptime(
+                        date_text.replace("/", "-"),
+                        "%d-%m-%Y"
+                    )
+                    return date.strftime("%B %Y")
+                except ValueError:
                     pass
-    # MSEDCL filename code fallback: _YYMM_
-    m = re.search(r"_(\d{2})(0[1-9]|1[0-2])_", filename)
-    if m:
-        return datetime(2000 + int(m.group(1)), int(m.group(2)), 1).strftime("%B %Y")
+
+    match = re.search(
+        r"_(\d{2})(0[1-9]|1[0-2])_",
+        filename
+    )
+
+    if match:
+        return datetime(
+            2000 + int(match.group(1)),
+            int(match.group(2)),
+            1
+        ).strftime("%B %Y")
+
     return ""
 
+
 def parse_bill(upload, text, provider_name):
-    is_msedcl = provider_name == "MSEDCL / Mahavitaran" or any(
-        x in (upload.name + " " + text[:2500]).upper() for x in ["MSEDCL", "MAHADISCOM", "MAHAVITARAN"]
-    )
-    if is_msedcl and upload.name.lower().endswith(".pdf"):
-        amount, units, amount_ev, units_ev, month = coordinate_msedcl(upload.getvalue())
-        if amount is not None or units is not None or month:
-            return amount, units, amount_ev, units_ev, month, "MSEDCL layout-aware"
-    amount, amount_ev = label_value(text, AMOUNT_PATTERNS)
-    units, units_ev = label_value(text, UNIT_PATTERNS)
+    amount, amount_evidence = label_value(text, AMOUNT_PATTERNS)
+    units, units_evidence = label_value(text, UNIT_PATTERNS)
     month = extract_month(text, upload.name)
-    return amount, units, amount_ev, units_ev, month, "Multilingual text/OCR labels"
+
+    return (
+        amount,
+        units,
+        amount_evidence,
+        units_evidence,
+        month,
+        "Text/OCR label matching"
+    )
+
 
 def anomaly_messages(amount, units, records):
-    out = []
+    messages = []
+
     if amount > 0 and units > 0:
         ratio = amount / units
+
         if ratio < 1 or ratio > 50:
-            out.append(("warning", f"Amount divided by units is ₹{ratio:.2f}/kWh. This is only a rough ratio including charges; verify the bill."))
+            messages.append(
+                f"Amount divided by units is ₹{ratio:.2f}/kWh. "
+                "This rough ratio includes charges; verify the bill."
+            )
+
     if units > 3000:
-        out.append(("warning", "Usage exceeds 3,000 kWh. Verify the value and property type."))
+        messages.append(
+            "Usage exceeds 3,000 kWh. Verify the value and property type."
+        )
+
     if records:
-        prev = records[-1]
-        for val, old, label in [(units, float(prev["Units (kWh)"]), "consumption"),
-                                (amount, float(prev["Bill amount (₹)"]), "bill amount")]:
-            if old > 0 and val > 0 and abs((val-old)/old*100) >= 50:
-                out.append(("warning", f"{label.capitalize()} changed by {(val-old)/old*100:+.0f}% versus the last saved bill. This is a review alert, not proof of an error."))
-    return out
+        previous = records[-1]
+
+        for value, old, label in [
+            (units, float(previous["Units (kWh)"]), "Consumption"),
+            (amount, float(previous["Bill amount (₹)"]), "Bill amount")
+        ]:
+            if old > 0 and value > 0:
+                change = (value - old) / old * 100
+
+                if abs(change) >= 50:
+                    messages.append(
+                        f"{label} changed by {change:+.0f}% compared "
+                        "with the last saved bill. Please review."
+                    )
+
+    return messages
+
+
+# SECTION 1: BILL UPLOAD
 
 st.header("1. Upload and verify electricity bills")
-uploads = st.file_uploader("Upload PDF, JPG, JPEG or PNG bills", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True)
+
+uploads = st.file_uploader(
+    "Upload PDF, JPG, JPEG or PNG bills",
+    type=["pdf", "jpg", "jpeg", "png"],
+    accept_multiple_files=True
+)
 
 if uploads:
-    lang_codes = "+".join(LANGS[x] for x in selected_languages) if selected_languages else "eng"
-    for idx, upload in enumerate(uploads):
-        with st.expander(f"Review: {upload.name}", expanded=(idx == 0)):
+    language_codes = "+".join(
+        LANGS[name] for name in selected_languages
+    ) if selected_languages else "eng"
+
+    for index, upload in enumerate(uploads):
+        with st.expander(
+            f"Review: {upload.name}",
+            expanded=(index == 0)
+        ):
             try:
-                text, read_method = read_upload(upload, lang_codes, force_ocr, dpi)
-            except Exception as e:
-                st.error(f"Could not read this file: {e}")
+                text, read_method = read_upload(
+                    upload, language_codes, force_ocr, dpi
+                )
+            except Exception as error:
+                st.error(f"Could not read this file: {error}")
                 continue
-            amount_guess, units_guess, amount_ev, units_ev, month_guess, parser = parse_bill(upload, text, provider)
-            st.caption(f"Read method: {read_method} · Parser: {parser}")
-            with st.expander("Show extracted text/OCR for troubleshooting"):
-                st.text_area("Text read from bill", text[:12000], height=200, key=f"text_{idx}")
-            if amount_guess is None or units_guess is None or not month_guess:
-                st.warning("Some fields could not be read confidently. Please verify and fill any missing values from the original bill; the app will not silently guess.")
-            else:
-                st.success("Candidate values extracted. Verify each field against the original bill before saving.")
-            c1, c2 = st.columns(2)
-            with c1:
-                month = st.text_input("Billing month", value=month_guess, key=f"month_{idx}")
-                amount = st.number_input("Total bill amount (₹)", min_value=0.0, value=float(amount_guess or 0), step=10.0, key=f"amount_{idx}")
-                st.caption("Evidence: " + (amount_ev or "No matching label found"))
-            with c2:
-                units = st.number_input("Units consumed (kWh)", min_value=0.0, value=float(units_guess or 0), step=1.0, key=f"units_{idx}")
-                st.caption("Evidence: " + (units_ev or "No matching label found"))
-            for level, msg in anomaly_messages(amount, units, st.session_state.bill_records):
-                st.warning(msg) if level == "warning" else st.info(msg)
-            if st.button("Save verified bill", key=f"save_{idx}", type="primary"):
+
+            (
+                amount_guess,
+                units_guess,
+                amount_evidence,
+                units_evidence,
+                month_guess,
+                parser
+            ) = parse_bill(upload, text, provider)
+
+            st.caption(
+                f"Read method: {read_method} | Parser: {parser}"
+            )
+
+            with st.expander("Show extracted text/OCR"):
+                st.text_area(
+                    "Text read from bill",
+                    text[:12000],
+                    height=220,
+                    key=f"text_{index}"
+                )
+
+            st.warning(
+                "Verify the extracted fields against your original bill."
+            )
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                month = st.text_input(
+                    "Billing month",
+                    value=month_guess,
+                    key=f"month_{index}"
+                )
+
+                amount = st.number_input(
+                    "Total bill amount (₹)",
+                    min_value=0.0,
+                    value=float(amount_guess or 0),
+                    step=10.0,
+                    key=f"amount_{index}"
+                )
+
+                st.caption(
+                    "Amount evidence: "
+                    + (amount_evidence or "No matching label found")
+                )
+
+            with col2:
+                units = st.number_input(
+                    "Units consumed (kWh)",
+                    min_value=0.0,
+                    value=float(units_guess or 0),
+                    step=1.0,
+                    key=f"units_{index}"
+                )
+
+                st.caption(
+                    "Units evidence: "
+                    + (units_evidence or "No matching label found")
+                )
+
+            for message in anomaly_messages(
+                amount, units, st.session_state.bill_records
+            ):
+                st.warning(message)
+
+            if st.button(
+                "Save verified bill",
+                key=f"save_{index}",
+                type="primary"
+            ):
                 if not month.strip() or amount <= 0 or units <= 0:
-                    st.error("Enter a month, positive amount and positive kWh after checking the original bill.")
-                elif any(r["Bill month"].lower() == month.strip().lower() for r in st.session_state.bill_records):
-                    st.error("This month is already saved. Clear session history before replacing it.")
+                    st.error(
+                        "Enter the correct month, amount and units "
+                        "after checking the original bill."
+                    )
+                elif any(
+                    r["Bill month"].lower() == month.strip().lower()
+                    for r in st.session_state.bill_records
+                ):
+                    st.error(
+                        "This month is already saved. Clear history "
+                        "before saving a replacement."
+                    )
                 else:
                     st.session_state.bill_records.append({
-                        "Bill month": month.strip(), "Bill amount (₹)": float(amount),
-                        "Units (kWh)": float(units), "Provider": provider, "Source file": upload.name
+                        "Bill month": month.strip(),
+                        "Bill amount (₹)": float(amount),
+                        "Units (kWh)": float(units),
+                        "Provider": provider,
+                        "Source file": upload.name
                     })
-                    st.success("Saved for this session only.")
+                    st.success("Bill saved for this session.")
+
+
+# SECTION 2: BILL HISTORY
 
 st.divider()
 st.header("2. Bill history and comparison")
+
 if st.session_state.bill_records:
     df = pd.DataFrame(st.session_state.bill_records)
     df["_sort"] = pd.to_datetime(df["Bill month"], errors="coerce")
-    df = df.sort_values("_sort").drop(columns="_sort")
+    df = df.sort_values("_sort", na_position="last").drop(columns="_sort")
+
     st.dataframe(df, use_container_width=True, hide_index=True)
-    a, b = st.columns(2)
-    with a:
+
+    col1, col2 = st.columns(2)
+
+    with col1:
         st.subheader("Monthly bill amount (₹)")
         st.bar_chart(df.set_index("Bill month")["Bill amount (₹)"])
-    with b:
+
+    with col2:
         st.subheader("Monthly usage (kWh)")
         st.bar_chart(df.set_index("Bill month")["Units (kWh)"])
+
     if len(df) >= 2:
         old, new = df.iloc[-2], df.iloc[-1]
-        x, y, z = st.columns(3)
-        x.metric("Latest bill", f"₹{new['Bill amount (₹)']:,.2f}")
-        y.metric("Latest usage", f"{new['Units (kWh)']:,.0f} kWh")
+        a, b, c = st.columns(3)
+
+        a.metric("Latest bill", f"₹{new['Bill amount (₹)']:,.2f}")
+        b.metric("Latest usage", f"{new['Units (kWh)']:,.0f} kWh")
+
         if old["Units (kWh)"] > 0:
-            z.metric("Usage change", f"{(new['Units (kWh)']-old['Units (kWh)'])/old['Units (kWh)']*100:+.1f}%")
-    st.download_button("Download CSV", df.to_csv(index=False).encode("utf-8-sig"), "billwise_report.csv", "text/csv")
+            change = (
+                (new["Units (kWh)"] - old["Units (kWh)"])
+                / old["Units (kWh)"] * 100
+            )
+            c.metric("Usage change", f"{change:+.1f}%")
+
+    st.download_button(
+        "Download CSV",
+        df.to_csv(index=False).encode("utf-8-sig"),
+        "billwise_report.csv",
+        "text/csv"
+    )
+
     if st.button("Clear session bill history"):
         st.session_state.bill_records = []
         st.rerun()
 else:
-    st.info("Save verified bills to see month-to-month comparisons.")
+    st.info("Save verified bills to compare monthly amounts and usage.")
+
+
+# SECTION 3: APPLIANCE ESTIMATOR
 
 st.divider()
 st.header("3. High-energy appliance estimator")
-st.write("Estimate which appliances may use the most energy from rated power and hours of use. This is an estimate, not a measurement from the bill.")
+
+st.write(
+    "Estimate appliance energy from power rating and hours of use. "
+    "These are estimates, not measurements from the bill."
+)
+
 appliance_defaults = {
-    "Air conditioner (AC)": 1500, "Water geyser": 2000, "Refrigerator": 150,
-    "Washing machine": 500, "Microwave": 1200, "Electric iron": 1000,
-    "Water pump": 750, "Ceiling fan": 70, "LED bulb": 9, "Desktop computer": 200,
-    "Television": 100, "Induction cooktop": 1800, "Other appliance": 500
+    "Air conditioner (AC)": 1500,
+    "Water geyser": 2000,
+    "Refrigerator": 150,
+    "Washing machine": 500,
+    "Microwave": 1200,
+    "Electric iron": 1000,
+    "Water pump": 750,
+    "Ceiling fan": 70,
+    "LED bulb": 9,
+    "Desktop computer": 200,
+    "Television": 100,
+    "Induction cooktop": 1800,
+    "Other appliance": 500
 }
+
 with st.form("appliance_form"):
-    selected_appliances = st.multiselect("Choose appliances in your home", list(appliance_defaults),
-        default=["Air conditioner (AC)", "Water geyser", "Refrigerator", "Ceiling fan"])
+    selected_appliances = st.multiselect(
+        "Choose appliances in your home",
+        list(appliance_defaults),
+        default=[
+            "Air conditioner (AC)",
+            "Water geyser",
+            "Refrigerator",
+            "Ceiling fan"
+        ]
+    )
+
     appliance_rows = []
-    for i, name in enumerate(selected_appliances):
+
+    for index, name in enumerate(selected_appliances):
         cols = st.columns([2, 1, 1, 1])
         cols[0].markdown(f"**{name}**")
-        watts = cols[1].number_input("Rated watts", min_value=1, max_value=20000,
-            value=appliance_defaults[name], key=f"w_{i}_{name}")
-        hours = cols[2].number_input("Hours/day", min_value=0.0, max_value=24.0,
-            value=4.0 if "AC" in name else (1.0 if "geyser" in name.lower() else 8.0),
-            step=0.5, key=f"h_{i}_{name}")
-        quantity = cols[3].number_input("Quantity", min_value=1, max_value=100, value=1, key=f"q_{i}_{name}")
+
+        watts = cols[1].number_input(
+            "Rated watts",
+            min_value=1,
+            max_value=20000,
+            value=appliance_defaults[name],
+            key=f"watts_{index}_{name}"
+        )
+
+        default_hours = (
+            4.0 if "AC" in name
+            else 1.0 if "geyser" in name.lower()
+            else 8.0
+        )
+
+        hours = cols[2].number_input(
+            "Hours/day",
+            min_value=0.0,
+            max_value=24.0,
+            value=default_hours,
+            step=0.5,
+            key=f"hours_{index}_{name}"
+        )
+
+        quantity = cols[3].number_input(
+            "Quantity",
+            min_value=1,
+            max_value=100,
+            value=1,
+            key=f"quantity_{index}_{name}"
+        )
+
         appliance_rows.append((name, watts, hours, quantity))
-    tariff = st.number_input("Approximate energy rate (₹/kWh)", min_value=0.0, max_value=100.0, value=8.0, step=0.5)
+
+    tariff = st.number_input(
+        "Approximate energy rate (₹/kWh)",
+        min_value=0.0,
+        max_value=100.0,
+        value=8.0,
+        step=0.5
+    )
+
     submitted = st.form_submit_button("Estimate appliance usage")
-if submitted and appliance_rows:
-    results = []
-    for name, watts, hours, quantity in appliance_rows:
-        kwh = watts / 1000 * hours * 30 * quantity
-        results.append({"Appliance": name, "Estimated kWh/month": round(kwh, 2),
-                        "Estimated energy cost (₹)": round(kwh * tariff, 2)})
-    adf = pd.DataFrame(results).sort_values("Estimated kWh/month", ascending=False)
-    st.dataframe(adf, use_container_width=True, hide_index=True)
-    st.bar_chart(adf.set_index("Appliance")["Estimated kWh/month"])
-    top = adf.iloc[0]
-    st.info(f"Highest estimated user-entered appliance: {top['Appliance']} at {top['Estimated kWh/month']:.1f} kWh/month. Verify actual power and hours; AC input varies with model, temperature and compressor cycling.")
-    st.caption("Formula: kWh/month = watts ÷ 1000 × hours/day × 30 × quantity. Cost estimate excludes fixed charges, taxes and tariff slabs.")
-else:
-    st.caption("Choose appliances, enter the wattage printed on the label/manual and typical hours of use, then submit.")
+
+if submitted:
+    if not appliance_rows:
+        st.info("Choose at least one appliance.")
+    else:
+        results = []
+
+        for name, watts, hours, quantity in appliance_rows:
+            kwh = watts / 1000 * hours * 30 * quantity
+
+            results.append({
+                "Appliance": name,
+                "Estimated kWh/month": round(kwh, 2),
+                "Estimated energy cost (₹)": round(kwh * tariff, 2)
+            })
+
+        appliance_df = pd.DataFrame(results).sort_values(
+            "Estimated kWh/month",
+            ascending=False
+        )
+
+        st.dataframe(
+            appliance_df,
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.bar_chart(
+            appliance_df.set_index("Appliance")["Estimated kWh/month"]
+        )
+
+        top = appliance_df.iloc[0]
+
+        st.info(
+            f"Highest estimated appliance: {top['Appliance']} "
+            f"at {top['Estimated kWh/month']:.1f} kWh/month. "
+            "Actual usage may differ."
+        )
+
+        st.caption(
+            "Formula: kWh/month = watts ÷ 1000 × hours/day × 30 × quantity. "
+            "Cost excludes fixed charges, taxes and tariff slabs."
+        )
+
+
+# SECTION 4: SAVINGS COACH
 
 st.divider()
 st.header("4. Electricity savings coach")
+
 st.markdown("""
-- **Air conditioner:** set a comfortable temperature (often around 24–26°C), clean filters, close doors/windows and use a fan to improve comfort at a higher setpoint.
-- **Geyser:** use a timer, heat only the water needed, and switch it off after use.
-- **Refrigerator:** keep door seals in good condition, avoid frequent long door openings, and allow airflow around the appliance.
-- **Fans and lights:** use LEDs, switch off unused lights/fans and consider efficient fan models.
-- **Washing machine:** run full loads when practical and use suitable eco/cold-water modes.
-- **General:** compare kWh as well as rupees. Billing days, arrears, tariff slabs, taxes and fixed charges can change the bill independently of usage.
+- **Air conditioner:** clean filters, close doors and windows, and use a
+  comfortable temperature setting.
+- **Geyser:** heat only the water needed and switch it off after use.
+- **Refrigerator:** maintain door seals and allow airflow around the unit.
+- **Lights:** use LEDs and switch off unused lights.
+- **Washing machine:** run full loads when practical.
+- **General:** compare kWh as well as rupees because tariffs, billing days,
+  taxes and fixed charges affect the final amount.
 """)
+
 if st.session_state.bill_records:
-    latest_units = float(st.session_state.bill_records[-1]["Units (kWh)"])
-    st.info(f"Latest saved usage is {latest_units:.1f} kWh. Set a personal reduction target below to estimate possible energy savings.")
-    target = st.slider("Target reduction in monthly usage (%)", 0, 30, 10, 5)
-    rate = st.number_input("Approximate marginal rate for savings estimate (₹/kWh)", 0.0, 100.0, 8.0, 0.5, key="savings_rate")
-    saved_kwh = latest_units * target / 100
-    st.metric("Potential monthly energy-cost reduction (estimate)", f"₹{saved_kwh*rate:,.0f}", f"{saved_kwh:.1f} kWh less")
-    st.caption("Illustrative estimate only. Actual savings depend on the tariff slab, appliance behavior and other bill charges.")
+    latest_units = float(
+        st.session_state.bill_records[-1]["Units (kWh)"]
+    )
+
+    st.info(f"Latest saved usage: {latest_units:.1f} kWh")
+
+    target = st.slider(
+        "Target reduction in monthly usage (%)",
+        0, 30, 10, 5
+    )
+
+    rate = st.number_input(
+        "Estimated energy rate (₹/kWh)",
+        min_value=0.0,
+        max_value=100.0,
+        value=8.0,
+        step=0.5,
+        key="savings_rate"
+    )
+
+    saved_units = latest_units * target / 100
+    saved_cost = saved_units * rate
+
+    col1, col2 = st.columns(2)
+
+    col1.metric(
+        "Potential energy reduction",
+        f"{saved_units:.1f} kWh/month"
+    )
+
+    col2.metric(
+        "Approximate energy-cost reduction",
+        f"₹{saved_cost:,.2f}/month"
+    )
+
+    st.caption(
+        "This is an estimate, not a guaranteed bill reduction."
+    )
+
+
+# SECTION 5: BUILT-IN CUSTOMER SUPPORT
 
 st.divider()
-st.header("5. Free customer support assistant")
-st.write("This support assistant is free and works without an API key. It uses built-in troubleshooting guidance, not a generative AI model.")
+st.header("5. Customer support assistant")
 
-def support_answer(q):
-    q = q.lower()
-    if any(x in q for x in ["high bill", "bill increased", "bill high", "unexpected", "expensive"]):
-        return "Compare kWh, billing days, previous/current meter readings, tariff slabs, fixed charges, taxes, arrears and adjustments. A higher rupee amount alone does not prove a fault. If the bill still seems wrong, contact your provider through the official contact details on the bill."
-    if any(x in q for x in ["wrong amount", "amount wrong", "incorrect amount", "wrong units", "units wrong", "not detected", "blank", "0.00"]):
-        return "Open 'Show extracted text/OCR' and compare the visible bill fields. Confirm the amount due (not a subtotal, paid amount or arrears) and the consumption in kWh (not kW, sanctioned load or meter reading). Correct the fields manually and do not save until verified. If OCR is poor, choose the printed language in the sidebar or try a clearer scan."
-    if any(x in q for x in ["ac", "air conditioner", "geyser", "fridge", "refrigerator", "appliance", "device", "which uses"]):
-        return "Use the appliance estimator: enter each device's rated watts, hours per day and quantity. The app ranks estimated monthly kWh. It cannot identify an appliance from a household bill alone; actual device-level measurement requires smart plugs or circuit monitoring."
-    if any(x in q for x in ["reduce", "save electricity", "saving", "lower bill"]):
-        return "Start with the largest estimated kWh appliances. Reduce AC run time or raise its setpoint slightly, use a geyser timer, use LEDs, run full washing-machine loads, and switch off idle devices. Estimated savings are not guaranteed; compare measured kWh across similar billing periods."
-    if any(x in q for x in ["pdf", "upload", "language", "marathi", "hindi", "ocr", "scan", "error"]):
-        return "Try a readable PDF or a sharp, upright JPG/PNG image. Select the language(s) printed on the bill and enable Force OCR for scanned/garbled PDFs. If a language pack is unavailable on hosting, OCR may fall back to English. Verify extracted fields manually."
-    if any(x in q for x in ["complaint", "meter", "dispute", "fault"]):
-        return "This website cannot test a physical meter or submit an official complaint. Keep your bill and meter-reading evidence, then contact your electricity provider through official channels."
-    return "I can help with bill scanning, language/OCR settings, amount and kWh verification, monthly comparisons, appliance estimates and savings advice. Please don't share consumer numbers, full addresses or payment details here."
+st.write(
+    "Ask questions about electricity bills, OCR, units, appliances "
+    "or saving electricity. This offline helper requires no paid AI API."
+)
 
-for msg in st.session_state.support_chat:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-question = st.chat_input("Ask BillWise Support…")
+
+def support_answer(question):
+    q = question.lower()
+
+    if any(x in q for x in [
+        "language", "marathi", "hindi", "gujarati",
+        "ocr", "garbled", "wrong text"
+    ]):
+        return (
+            "Select the languages present on your bill in the sidebar. "
+            "For a PDF with corrupted embedded text, try enabling Force OCR. "
+            "The relevant Tesseract language packs must be installed. "
+            "If text remains unclear, verify the fields manually."
+        )
+
+    if any(x in q for x in ["units", "kwh", "consumption", "usage"]):
+        return (
+            "One electricity unit usually equals 1 kWh. Compare monthly "
+            "kWh values as well as bill amounts, because tariffs and "
+            "billing charges can change the amount."
+        )
+
+    if any(x in q for x in [
+        "high bill", "bill increased", "amount", "expensive"
+    ]):
+        return (
+            "Compare current kWh with previous months. Check billing days, "
+            "arrears, meter readings, tariff slabs, taxes and fixed charges."
+        )
+
+    if any(x in q for x in [
+        "ac", "air conditioner", "geyser", "appliance",
+        "fan", "fridge", "refrigerator"
+    ]):
+        return (
+            "Estimated kWh/month = watts ÷ 1000 × hours/day × 30 × quantity. "
+            "Actual use depends on operating time, settings and appliance condition."
+        )
+
+    if any(x in q for ["save", "reduce", "saving"]):
+        return (
+            "Consider reducing unnecessary AC runtime, using a geyser timer, "
+            "switching to LEDs and running full washing-machine loads. "
+            "Track monthly kWh to assess the effect."
+        )
+
+    return (
+        "I can help with OCR and language issues, understanding kWh, "
+        "investigating high bills, appliance estimates and energy savings. "
+        "Ask a specific question."
+    )
+
+
+for message in st.session_state.support_chat:
+    with st.chat_message(message["role"]):
+        st.write(message["content"])
+
+question = st.chat_input("Ask BillWise a question...")
+
 if question:
-    st.session_state.support_chat.append({"role": "user", "content": question})
-    answer = support_answer(question)
-    st.session_state.support_chat.append({"role": "assistant", "content": answer})
-    st.rerun()
-if st.button("Clear support conversation"):
-    st.session_state.support_chat = []
-    st.rerun()
+    st.session_state.support_chat.append({
+        "role": "user",
+        "content": question
+    })
 
-st.divider()
-st.caption("Privacy: bills and records are processed in this app session; this prototype does not provide permanent accounts or saved cloud history. Do not upload private bills to public GitHub. Extraction supports multiple languages only when the required OCR language data is available. Test each provider format before public use.")
+    answer = support_answer(question)
+
+    st.session_state.support_chat.append({
+        "role": "assistant",
+        "content": answer
+    })
+
+    st.rerun()
