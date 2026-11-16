@@ -1,4 +1,5 @@
 # BillWise India ⚡
+[Open BillWise India](https://electricity-bill-surprise-detector-sgdyzjvxmbz8kzfrm3ngsy.streamlit.app/)
 
 Understand your electricity bill, track usage and predict your next bill.
 Built for Indian consumers (especially MSEDCL / Mahavitaran, Maharashtra) with
